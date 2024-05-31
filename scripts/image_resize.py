@@ -2,15 +2,19 @@ import os
 
 from PIL import Image
 
+# Change to  your input folder
 file_path = "C:\\Users\\gevor\\Downloads\\colored2"
 directory = os.fsencode(file_path)
 
 for file in os.listdir(directory):
     filename = os.fsdecode(file)
     file_size = os.path.getsize(os.path.join(file_path, filename))
+
+    # This checks for files higher than 10KB
     if file_size >= 10000:
         print(filename)
         infile = os.path.join(file_path, filename)
+        #change to your output folder
         outfile = "C:\\Users\\gevor\\Downloads\\fixed\\"+filename
         try:
             with Image.open(infile) as im:
