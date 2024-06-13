@@ -11,7 +11,7 @@ from sklearn import metrics
 
 # Hyperparameters and settings
 batch_size = 32
-num_epochs = 1
+num_epochs = 10
 learning_rate = 0.001
 patience = 3
 random_seed = 42
