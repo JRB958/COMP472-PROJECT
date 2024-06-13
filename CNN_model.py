@@ -4,12 +4,17 @@ import torch.optim as optim
 import torch.utils.data as td
 import torchvision.datasets as datasets
 from torchvision.transforms import transforms
+import matplotlib.pyplot as plt
+import pandas as pd
+from sklearn.metrics import accuracy_score, precision_recall_fscore_support
+from sklearn import metrics
 
 # Hyperparameters and settings
 batch_size = 32
-num_epochs = 10
+num_epochs = 1
 learning_rate = 0.001
 patience = 3
+random_seed = 42
 
 # Global vars
 data_path = './Dataset/'
@@ -27,9 +32,10 @@ def custom_dataset_loader(data_path, batch_size):
     
     # Split dataset into training, validation, and testing
     train_size = int(0.7 * len(full_dataset))
-    valid_size = int(0.2 * len(full_dataset))
+    valid_size = int(0.15 * len(full_dataset))
     test_size = len(full_dataset) - train_size - valid_size
-    train_dataset, valid_dataset, test_dataset = torch.utils.data.random_split(full_dataset, [train_size, valid_size, test_size])
+    train_dataset, valid_dataset, test_dataset = torch.utils.data.random_split(
+        full_dataset, [train_size, valid_size, test_size], generator=torch.Generator().manual_seed(random_seed))
     
     # Create data loaders for training and testing
     train_loader = td.DataLoader(train_dataset, batch_size=batch_size, shuffle=True, pin_memory=True)
@@ -61,7 +67,7 @@ class CNN(nn.Module):
             nn.LeakyReLU(inplace=True),
             nn.MaxPool2d(kernel_size=2, stride=2),
         )
-        
+      
         self.fc_layer = nn.Sequential(
             nn.Dropout(p=0.1),
             nn.Linear(56*56*64, 1000),
@@ -69,7 +75,7 @@ class CNN(nn.Module):
             nn.Linear(1000, 512),
             nn.ReLU(inplace=True),
             nn.Dropout(p=0.1),
-            nn.Linear(512, 10)
+            nn.Linear(512, 4)
         )
         
     def forward(self, x):
@@ -77,9 +83,7 @@ class CNN(nn.Module):
         x = x.view(x.size(0), -1)
         x = self.fc_layer(x)
         return x
-########################CNN variants###############
 
-#Kernel size 3->5
 class CNN_Kernel_5(nn.Module):
     def __init__(self):
         super(CNN_Kernel_5, self).__init__()
@@ -108,7 +112,7 @@ class CNN_Kernel_5(nn.Module):
             nn.Linear(1000, 512),
             nn.ReLU(inplace=True),
             nn.Dropout(p=0.1),
-            nn.Linear(512, 10)
+            nn.Linear(512, 4)
         )
         
     def forward(self, x):
@@ -117,7 +121,6 @@ class CNN_Kernel_5(nn.Module):
         x = self.fc_layer(x)
         return x
 
-#Layers 4->5
 class CNN_Layers_5(nn.Module):
     def __init__(self):
         super(CNN_Layers_5, self).__init__()
@@ -145,12 +148,14 @@ class CNN_Layers_5(nn.Module):
         
         self.fc_layer = nn.Sequential(
             nn.Dropout(p=0.1),
-            nn.Linear(28*28*128, 1000),
+            nn.Linear(28*28*128, 10000),
+            nn.ReLU(inplace=True),
+            nn.Linear(10000, 1000),
             nn.ReLU(inplace=True),
             nn.Linear(1000, 512),
             nn.ReLU(inplace=True),
             nn.Dropout(p=0.1),
-            nn.Linear(512, 10)
+            nn.Linear(512, 4)
         )
         
     def forward(self, x):
@@ -158,121 +163,115 @@ class CNN_Layers_5(nn.Module):
         x = x.view(x.size(0), -1)
         x = self.fc_layer(x)
         return x
-#################################################
 
-model = CNN()
-# model = CNN_Kernel_5()
-# model = CNN_Layers_5()
-
-criterion = nn.CrossEntropyLoss()
-optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+# Training and validation function
+def train_and_validate_model(model, train_loader, valid_loader, criterion, optimizer, num_epochs, patience):
+    best_val_loss = float('inf')
+    patience_counter = 0
     
-total_step = len(train_loader)
-loss_list = []
-acc_list = []
-
-best_val_loss = float('inf')
-patience_counter = 0
-
-for epoch in range(num_epochs):
-    model.train()
-    for i, (images, labels) in enumerate(train_loader):        
-        # Forward pass
-        outputs = model(images)
-        loss = criterion(outputs, labels)
-        loss_list.append(loss.item())
-
-        # Backprop and optimization
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-        
-        # Train accuracy
-        total = labels.size(0)
-        _, predicted = torch.max(outputs.data, 1)
-        correct = (predicted == labels).sum().item()
-        acc_list.append(correct / total)
-        
-        print('Epoch [{}/{}], Step [{}/{}], Loss: {:.4f}, Accuracy: {:.2f}%'
-               .format(epoch + 1, num_epochs, i + 1, total_step, loss.item(),
-                       (correct / total) * 100))
-    
-    # Set the model to evaluation mode
-    model.eval()
-    
-    # Disable gradient computation
-    with torch.no_grad():
-        val_loss = 0
-        correct = 0
-        total = 0
-        
-        # Loop over the validation data
-        for images, labels in valid_loader:
+    for epoch in range(num_epochs):
+        model.train()
+        for i, (images, labels) in enumerate(train_loader):        
             outputs = model(images)
             loss = criterion(outputs, labels)
-            val_loss += loss.item()
-            
-            _, predicted = torch.max(outputs.data, 1)
-            total += labels.size(0)
-            correct += (predicted == labels).sum().item()
+
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
         
-        val_loss /= len(valid_loader)
-        accuracy = (correct / total) * 100
+        model.eval()
+        with torch.no_grad():
+            val_loss = 0
+            for images, labels in valid_loader:
+                outputs = model(images)
+                loss = criterion(outputs, labels)
+                val_loss += loss.item()
+            
+            val_loss /= len(valid_loader)
+        
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
+            patience_counter = 0
+            torch.save(model.state_dict(), 'best_model.pth')
+        else:
+            patience_counter += 1
+        
+        if patience_counter >= patience:
+            print("Early stopping")
+            break
+
+# Evaluation function
+def evaluate_model(model, data_loader):
+    model.eval()
+    all_labels = []
+    all_preds = []
+    with torch.no_grad():
+        for images, labels in data_loader:        
+            outputs = model(images)
+            _, predicted = torch.max(outputs.data, 1)
+            all_labels.extend(labels.cpu().numpy())
+            all_preds.extend(predicted.cpu().numpy())
+    return all_labels, all_preds
+
+def plot_confusion_matrix(labels, preds, classes):
+    cm = metrics.confusion_matrix(labels, preds)
+
+    cm_display = metrics.ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=classes)
     
-    print(f'Validation Loss: {val_loss:.4f}, Validation Accuracy: {accuracy:.2f} %')
+    # Plot the confusion matrix with additional customization
+    fig, ax = plt.subplots(figsize=(10, 8))
+    cm_display.plot(ax=ax, cmap="Blues")
     
-    # Check for early stopping
-    if val_loss < best_val_loss:
-        best_val_loss = val_loss
-        patience_counter = 0
-        # Save the model if it has improved
-        torch.save(model.state_dict(), 'best_model.pth')
-    else:
-        patience_counter += 1
+    # Add labels and title
+    ax.set_ylabel('Actual')
+    ax.set_xlabel('Predicted')
+    ax.set_title('Confusion Matrix')
     
-    if patience_counter >= patience:
-        print("Early stopping")
-        break
-
-# Load the best model
-best_model = CNN()
-best_model.load_state_dict(torch.load('best_model.pth'))
-
-# Save the best model for deployment
-torch.save(best_model.state_dict(), 'best_model_deploy.pth')
-
-# Load and run the saved model on the test set
-best_model.eval()
-with torch.no_grad():
-    correct = 0
-    total = 0
+    # Ensure labels are set correctly
+    ax.set_xticklabels(classes, rotation=45, ha="right")
+    ax.set_yticklabels(classes, rotation=0)
     
-    for images, labels in test_loader:        
-        outputs = best_model(images)
-        _, predicted = torch.max(outputs.data, 1)
-        total += labels.size(0)
-        correct += (predicted == labels).sum().item()
-
-accuracy = (correct / total) * 100
-print(f'Test Accuracy of the best model on the {total} test images: {accuracy:.2f} %')
+    plt.show()
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+# Main code execution
+if __name__ == '__main__':
+    models = {
+        "Main Model": CNN(),
+        "Variant 1": CNN_Kernel_5(),
+        "Variant 2": CNN_Layers_5()
+    }
+    
+    results = []
+    
+    for model_name, model in models.items():
+        print(f"Training {model_name}...")
+        
+        criterion = nn.CrossEntropyLoss()
+        optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+        
+        train_and_validate_model(model, train_loader, valid_loader, criterion, optimizer, num_epochs, patience)
+        
+        model.load_state_dict(torch.load('best_model.pth'))
+        labels, preds = evaluate_model(model, test_loader)
+        
+        accuracy = accuracy_score(labels, preds)
+        precision_macro, recall_macro, f1_macro, _ = precision_recall_fscore_support(labels, preds, average='macro', zero_division=0)
+        precision_micro, recall_micro, f1_micro, _ = precision_recall_fscore_support(labels, preds, average='micro', zero_division=0)
+        
+        results.append({
+            'Model': model_name,
+            'Macro P': precision_macro,
+            'Macro R': recall_macro,
+            'Macro F': f1_macro,
+            'Micro P': precision_micro,
+            'Micro R': recall_micro,
+            'Micro F': f1_micro,
+            'Accuracy': accuracy
+        })
+        # Plot confusion matrix
+        plot_confusion_matrix(labels, preds, classes=datasets.ImageFolder(root=data_path).classes)
+    
+    results_df = pd.DataFrame(results)
+    print(results_df)
+    results_df.to_csv('model_performance_metrics.csv', index=False)
