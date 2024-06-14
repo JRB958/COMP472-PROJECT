@@ -8,19 +8,23 @@ import matplotlib.pyplot as plt
 import pandas as pd
 from sklearn.metrics import accuracy_score, precision_recall_fscore_support
 from sklearn import metrics
+import time
+import re
 
 # Hyperparameters and settings
 batch_size = 32
 num_epochs = 10
 learning_rate = 0.001
-patience = 3
+patience = 5
 random_seed = 42
 
 # Global vars
-data_path = './Dataset/'
+data_path = 'G:\Dataset - Assignment 2'
+best_model_path = 'best_model.pth'
 
 # Function to load datasets
 def custom_dataset_loader(data_path, batch_size):
+    
     transform = transforms.Compose([
         transforms.Resize((224, 224)),
         transforms.ToTensor(),
@@ -48,58 +52,92 @@ def custom_dataset_loader(data_path, batch_size):
 train_loader, valid_loader, test_loader = custom_dataset_loader(data_path, batch_size)
 
 class CNN(nn.Module):
+    '''
+    this is the main model, it has the following structure
+    
+        feature extraction part:
+            - number of convolutional layers: 3
+            - number of subsampling layers: 2 max pooling
+            - normalization after every convolution
+            
+            conv1 --> conv2 --> maxpool1 --> conv3 --> maxpool2
+        
+        classification part: 
+            - number of fully connected layers: 3
+            - ReLU activation function after each layer
+            - dropout of 0.1 after each fc layer
+    '''
     def __init__(self):
         super(CNN, self).__init__()
         
         self.conv_layer = nn.Sequential(
+            
+            # First convolutional layer: input (3x224x224), output (32x224x224)
             nn.Conv2d(in_channels=3, out_channels=32, kernel_size=3, padding=1),
             nn.BatchNorm2d(32),
             nn.LeakyReLU(inplace=True),
+            
+            # Second convolutional layer: input (32x224x224), output (32x224x224)
             nn.Conv2d(in_channels=32, out_channels=32, kernel_size=3, padding=1),
             nn.BatchNorm2d(32),
             nn.LeakyReLU(inplace=True),
+            
+            # First subsampling (MaxPooling) layer: input (32x224x224), output (32x112x112)
             nn.MaxPool2d(kernel_size=2, stride=2),
+            
+            # Third convolutional layer: input (32x112x112), output (64x112x112)
             nn.Conv2d(in_channels=32, out_channels=64, kernel_size=3, padding=1),
             nn.BatchNorm2d(64),
             nn.LeakyReLU(inplace=True),
-            nn.Conv2d(in_channels=64, out_channels=64, kernel_size=3, padding=1),
-            nn.BatchNorm2d(64),
-            nn.LeakyReLU(inplace=True),
+            
+            # Second subsampling (MaxPooling) layer: input (64x112x112), output (64x56x56)
             nn.MaxPool2d(kernel_size=2, stride=2),
         )
       
         self.fc_layer = nn.Sequential(
             nn.Dropout(p=0.1),
-            nn.Linear(56*56*64, 1000),
+            
+            # First fully connected layer: input (64*56*56), output (1000)
+            nn.Linear(64*56*56, 1000),
             nn.ReLU(inplace=True),
+            nn.Dropout(p=0.1),
+            
+            # Second fully connected layer: input (1000), output (512)
             nn.Linear(1000, 512),
             nn.ReLU(inplace=True),
             nn.Dropout(p=0.1),
+            
+            # Third fully connected layer: input (512), output (4) - assuming 4 classes for classification
             nn.Linear(512, 4)
         )
         
     def forward(self, x):
+        # Pass through convolutional layers
         x = self.conv_layer(x)
+        # Flatten the tensor for fully connected layers
         x = x.view(x.size(0), -1)
+        # Pass through fully connected layers
         x = self.fc_layer(x)
         return x
 
+    
+#padding 2
 class CNN_Kernel_5(nn.Module):
     def __init__(self):
         super(CNN_Kernel_5, self).__init__()
         
         self.conv_layer = nn.Sequential(
-            nn.Conv2d(in_channels=3, out_channels=32, kernel_size=5, padding=1),
+            nn.Conv2d(in_channels=3, out_channels=32, kernel_size=5, padding=2),
             nn.BatchNorm2d(32),
             nn.LeakyReLU(inplace=True),
-            nn.Conv2d(in_channels=32, out_channels=32, kernel_size=5, padding=1),
+            nn.Conv2d(in_channels=32, out_channels=32, kernel_size=5, padding=2),
             nn.BatchNorm2d(32),
             nn.LeakyReLU(inplace=True),
             nn.MaxPool2d(kernel_size=2, stride=2),
-            nn.Conv2d(in_channels=32, out_channels=64, kernel_size=5, padding=1),
+            nn.Conv2d(in_channels=32, out_channels=64, kernel_size=5, padding=2),
             nn.BatchNorm2d(64),
             nn.LeakyReLU(inplace=True),
-            nn.Conv2d(in_channels=64, out_channels=64, kernel_size=5, padding=1),
+            nn.Conv2d(in_channels=64, out_channels=64, kernel_size=5, padding=2),
             nn.BatchNorm2d(64),
             nn.LeakyReLU(inplace=True),
             nn.MaxPool2d(kernel_size=2, stride=2),
@@ -107,7 +145,7 @@ class CNN_Kernel_5(nn.Module):
         
         self.fc_layer = nn.Sequential(
             nn.Dropout(p=0.1),
-            nn.Linear(53*53*64, 1000),
+            nn.Linear(54*54*64, 1000),
             nn.ReLU(inplace=True),
             nn.Linear(1000, 512),
             nn.ReLU(inplace=True),
@@ -165,40 +203,90 @@ class CNN_Layers_5(nn.Module):
         return x
 
 # Training and validation function
-def train_and_validate_model(model, train_loader, valid_loader, criterion, optimizer, num_epochs, patience):
-    best_val_loss = float('inf')
-    patience_counter = 0
+def train_and_validate_model(model, train_loader, valid_loader, criterion, optimizer, num_epochs, patience, best_model_path):
+    '''
+    This function is designed to train a neural network model while monitoring its performance on a validation 
+    dataset. It implements early stopping to prevent overfitting by stopping the training process if the 
+    model's performance on the validation set does not improve for a specified number of epochs
+    '''
+    best_val_loss = float('inf') # Tracks the best (lowest) validation loss observed so far. Initialized to infinity.
+    patience_counter = 0 # Counts the number of consecutive epochs during which the validation loss has not improved.
     
+    # main training loop
     for epoch in range(num_epochs):
-        model.train()
+        
+        # model Training
+        # **************
+        
+        model.train() # Sets the model to training mode.
+        total_step = len(train_loader)
+        loss_list = []
+        acc_list = []
+        
+        # batch loop iterates through batches of training data
         for i, (images, labels) in enumerate(train_loader):        
-            outputs = model(images)
-            loss = criterion(outputs, labels)
-
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-        
-        model.eval()
-        with torch.no_grad():
-            val_loss = 0
-            for images, labels in valid_loader:
-                outputs = model(images)
-                loss = criterion(outputs, labels)
-                val_loss += loss.item()
+            outputs = model(images) # forward pass, outputs are the predictions of the model
+            loss = criterion(outputs, labels) # loss between the predictions and the actual labels
+            loss_list.append(loss.item())
             
-            val_loss /= len(valid_loader)
+            # backpropagation 
+            optimizer.zero_grad() # clears the gradients of all model parameters.
+            loss.backward() # computes the gradients of the loss with respect to the model parameters.
+            optimizer.step() # updates the model parameters using the computed gradients.
+            
+            # Calculate training accuracy
+            total = labels.size(0)
+            _, predicted = torch.max(outputs.data, 1)
+            correct = (predicted == labels).sum().item()
+            acc_list.append(correct / total) # not used
+            
+            # Print training status every 5 steps
+            if (i + 1) % 5 == 0:
+                print('Epoch [{}/{}], Step [{}/{}], Loss: {:.4f}, Accuracy: {:.2f}%'
+                      .format(epoch + 1, num_epochs, i + 1, total_step, loss.item(), (correct / total) * 100))
+    
+        # model Evaluation
+        # ****************
         
-        if val_loss < best_val_loss:
-            best_val_loss = val_loss
-            patience_counter = 0
-            torch.save(model.state_dict(), 'best_model.pth')
-        else:
-            patience_counter += 1
+        model.eval() # sets the model to evaluation mode. This is crucial as it turns off certain layers like 
+                     # dropout and batch normalization, which behave differently during training and inference.
+                     
+        with torch.no_grad(): # disables gradient calculation, reducing memory consumption and speeding up computations.
+            val_loss = 0
+            correct = 0
+            total = 0
+            
+            # batch loop iterates through batches of validation data
+            for images, labels in valid_loader:
+                outputs = model(images) # forward pass, outputs are the predictions of the model
+                loss = criterion(outputs, labels) # # loss between the predictions and the actual labels
+                val_loss += loss.item() # accumulates the total validation loss
+                
+                _, predicted = torch.max(outputs.data, 1)
+                total += labels.size(0)
+                correct += (predicted == labels).sum().item()
+            
+            val_loss /= len(valid_loader) # averages the loss over the entire validation set
+            accuracy = (correct / total) * 100 # calculate validation accuracy
+        
+        if epoch > 3: 
+            if val_loss < best_val_loss: # the validation loss is stored if it's the lowest as the best loss and the model is saved as best model
+                best_val_loss = val_loss
+                patience_counter = 0
+                torch.save(model.state_dict(), best_model_path)
+            else: # if it's not the best, the counter increases up to the patience parameter
+                patience_counter += 1
+        
+        print(f'Epoch [{epoch + 1}/{num_epochs}], Validation Loss: {val_loss:.4f}, Validation Accuracy: {accuracy:.2f} %, Best Validation Loss: {best_val_loss:.4f}')
         
         if patience_counter >= patience:
             print("Early stopping")
             break
+        
+        # add a wait period to allow the device to recover
+        if (num_epochs > 1 ):
+            time.sleep(300)
+
 
 # Evaluation function
 def evaluate_model(model, data_loader):
@@ -213,7 +301,14 @@ def evaluate_model(model, data_loader):
             all_preds.extend(predicted.cpu().numpy())
     return all_labels, all_preds
 
+def clean_class_names(classes):
+    # Use regular expression to remove numbers and brackets
+    return [re.sub(r'\(\d+\)', '', class_name).strip() for class_name in classes]
+
 def plot_confusion_matrix(labels, preds, classes):
+    # Clean the class names
+    classes = clean_class_names(classes)
+    
     cm = metrics.confusion_matrix(labels, preds)
 
     cm_display = metrics.ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=classes)
@@ -228,7 +323,7 @@ def plot_confusion_matrix(labels, preds, classes):
     ax.set_title('Confusion Matrix')
     
     # Ensure labels are set correctly
-    ax.set_xticklabels(classes, rotation=45, ha="right")
+    ax.set_xticklabels(classes, rotation=0, ha="right")
     ax.set_yticklabels(classes, rotation=0)
     
     plt.show()
@@ -248,11 +343,12 @@ if __name__ == '__main__':
         print(f"Training {model_name}...")
         
         criterion = nn.CrossEntropyLoss()
-        optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+        #using SGD optimizer 
+        optimizer = optim.SGD(model.parameters(), lr=learning_rate, weight_decay=1e-5, momentum=0.9)
         
-        train_and_validate_model(model, train_loader, valid_loader, criterion, optimizer, num_epochs, patience)
+        train_and_validate_model(model, train_loader, valid_loader, criterion, optimizer, num_epochs, patience, best_model_path)
         
-        model.load_state_dict(torch.load('best_model.pth'))
+        model.load_state_dict(torch.load(best_model_path))
         labels, preds = evaluate_model(model, test_loader)
         
         accuracy = accuracy_score(labels, preds)
