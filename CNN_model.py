@@ -344,7 +344,7 @@ if __name__ == '__main__':
         
         criterion = nn.CrossEntropyLoss()
         #using SGD optimizer 
-        optimizer = optim.SGD(model.parameters(), lr=learning_rate, weight_decay=1e-5, momentum=0.9)
+        optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=1e-5)
         
         train_and_validate_model(model, train_loader, valid_loader, criterion, optimizer, num_epochs, patience, best_model_path)
         
