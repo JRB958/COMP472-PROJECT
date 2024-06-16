@@ -47,3 +47,14 @@ The `/scripts` folder contains scripts for data cleaning and visualization:
    - Set the relative path to your source directory on line 207.
    - Set the relative path to your destination directory on line 209.
 3. Run the script.
+
+### b) Training and Evalution script
+
+**CNN_model.py**:
+1. Copy and paste this script into your IDE of choice.
+2. set the path of the data set (line 22)
+3. set the path of the best model to be saved (line 23)
+4. set the path of the csv that will contain the metrix (line 373)
+5. Run the script.
+
+
