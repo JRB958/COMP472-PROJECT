@@ -1,3 +1,8 @@
+# Link for the saved models for Part III:
+- 10-fold: https://drive.google.com/drive/folders/1V_UoOJDh0mqlWAUu6MjPlJDZ185xhV3T?usp=share_link
+- Bias: https://github.com/JRB958/COMP472-PROJECT/blob/main/nonbias_model.zip
+
+
 # COMP 472 Artificial Intelligence  
 
 ## Team Name: OB_03
